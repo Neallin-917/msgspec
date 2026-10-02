@@ -3175,6 +3175,8 @@ class TestTypedDict:
         class Final(Left, Right):
             pass
 
+        if "__orig_bases__" not in vars(Final):
+            pytest.skip("TypedDict implementation doesn't retain original bases")
         decoder = proto.Decoder(Final)
         assert decoder.decode(proto.encode({"x": "ok"})) == {"x": "ok"}
         with pytest.raises(ValidationError, match="Expected `str`, got `int`"):
