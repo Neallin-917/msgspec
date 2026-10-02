@@ -3122,6 +3122,64 @@ class TestTypedDict:
             with pytest.raises(ValidationError, match="Expected `int`, got `str`"):
                 proto.decode(proto.encode(invalid), type=Sub)
 
+    @pytest.mark.parametrize("module", ["typing", "typing_extensions"])
+    def test_typeddict_shared_ancestors(self, proto, module, monkeypatch):
+        TypedDict = pytest.importorskip(module).TypedDict
+        root = TypedDict("Root", {"x": int})
+        bases = (root,)
+        classes = [root]
+        for depth in range(12):
+            left = types.new_class(f"Left{depth}", bases)
+            right = types.new_class(f"Right{depth}", bases)
+            classes.extend((left, right))
+            bases = (left, right)
+        schema = types.new_class("Final", bases)
+        classes.append(schema)
+        if "__orig_bases__" not in vars(schema):
+            pytest.skip("TypedDict implementation doesn't retain original bases")
+
+        utils = msgspec._utils
+        original = utils._get_class_mro_and_typevar_mappings
+        calls = collections.Counter()
+
+        def count(obj):
+            calls[obj] += 1
+            return original(obj)
+
+        monkeypatch.setattr(utils, "_get_class_mro_and_typevar_mappings", count)
+        decoder = proto.Decoder(schema)
+        assert calls == {cls: 1 for cls in classes}
+        assert decoder.decode(proto.encode({"x": 1})) == {"x": 1}
+        with pytest.raises(ValidationError, match="Expected `int`, got `str`"):
+            decoder.decode(proto.encode({"x": "bad"}))
+        calls.clear()
+        schema.__annotations__["x"] = str
+        assert utils.get_class_annotations(schema) == {"x": str}
+        assert calls == {cls: 1 for cls in classes}
+
+    @pytest.mark.parametrize("module", ["typing", "typing_extensions"])
+    def test_typeddict_shared_generic_origin(self, proto, module):
+        if module == "typing" and sys.version_info < (3, 11):
+            pytest.skip("typing.TypedDict supports generics on Python 3.11+")
+        TypedDict = pytest.importorskip(module).TypedDict
+
+        class Base(TypedDict, Generic[T]):
+            x: T
+
+        class Left(Base[int]):
+            pass
+
+        class Right(Base[str]):
+            pass
+
+        class Final(Left, Right):
+            pass
+
+        decoder = proto.Decoder(Final)
+        assert decoder.decode(proto.encode({"x": "ok"})) == {"x": "ok"}
+        with pytest.raises(ValidationError, match="Expected `str`, got `int`"):
+            decoder.decode(proto.encode({"x": 1}))
+
     def test_inherited_generic_typeddict_scopes(self, proto):
         pytest.importorskip("typing_extensions")
 

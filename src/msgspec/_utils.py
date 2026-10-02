@@ -175,6 +175,16 @@ def get_class_annotations(obj):
     tool like ``mypy``/``pyright`` already, which would catch misuse of these
     APIs.
     """
+    return _get_class_annotations_recursive(obj, {})
+
+
+def _get_class_annotations_recursive(obj, cache):
+    # Cache by specialization identity, not its origin. Identity keys also
+    # support generic arguments that aren't hashable. Bases remain alive in
+    # __orig_bases__ throughout this lookup; no cache escapes the lookup.
+    key = id(obj)
+    if key in cache:
+        return cache[key]
     hints = {}
     mro, typevar_mappings = _get_class_mro_and_typevar_mappings(obj)
 
@@ -207,7 +217,7 @@ def get_class_annotations(obj):
                 if not hasattr(origin, "__required_keys__"):
                     continue
                 base_ann = _get_class_annotations(origin)
-                base_hints = get_class_annotations(base)
+                base_hints = _get_class_annotations_recursive(base, cache)
                 for name, value in base_ann.items():
                     inherited[name] = (value, base_hints[name])
         for name, value in ann.items():
@@ -223,6 +233,7 @@ def get_class_annotations(obj):
             if value is None:
                 value = type(None)
             hints[name] = value
+    cache[key] = hints
     return hints
 
 
